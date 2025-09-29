@@ -1,4 +1,4 @@
-**# GraphQL Builder**
+# GraphQL Builder
 
 ## URL
 https://graphqliteggo.netlify.app/
