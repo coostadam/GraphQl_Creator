@@ -1,6 +1,4 @@
-**# GraphQl_Creator
-Para usarlo simplemente entrar en https://graphqliteggo.netlify.app/
-**# GraphQL Builder
+**# GraphQL Builder**
 
 ## URL
 https://graphqliteggo.netlify.app/
