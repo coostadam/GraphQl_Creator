@@ -1,7 +1,16 @@
-import { buildSchema, isObjectType, isScalarType, isEnumType, isNonNullType, isListType } from 'graphql';
+import {
+  buildSchema,
+  isObjectType,
+  isNonNullType,
+  isListType,
+  GraphQLDirective,
+  DirectiveLocation,
+  GraphQLInt,
+  GraphQLString
+} from 'graphql';
 import React, { useState, useMemo } from 'react';
 
-// Helper para "desenvolver" tipos no null o listas y obtener el tipo base
+// Helper para "desenvolver" tipos NonNull o List y obtener el tipo base
 function unwrapType(type) {
   if (isNonNullType(type) || isListType(type)) {
     return unwrapType(type.ofType);
@@ -9,25 +18,26 @@ function unwrapType(type) {
   return type;
 }
 
-// Componente recursivo para renderizar los campos con checkboxes
+// Componente recursivo para renderizar campos con checkboxes
 function FieldSelector({ schema, type, path, selectedFields, setSelectedFields }) {
   if (!isObjectType(type)) return null;
 
   const fields = type.getFields();
 
+  // Función para marcar o desmarcar un campo
   const toggleField = (fieldName) => {
     const fullPath = [...path, fieldName].join('.');
     setSelectedFields((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(fullPath)) {
-        // Si ya estaba seleccionado y se desmarca, quitarlo y todos los descendientes
+        // Si se desmarca, quitar el campo y todos sus descendientes
         for (const selected of newSet) {
           if (selected === fullPath || selected.startsWith(fullPath + '.')) {
             newSet.delete(selected);
           }
         }
       } else {
-        // Si se marca, simplemente añadirlo
+        // Si se marca, añadir el campo
         newSet.add(fullPath);
       }
       return newSet;
@@ -51,7 +61,8 @@ function FieldSelector({ schema, type, path, selectedFields, setSelectedFields }
               />
               {field.name} ({fieldType.name || fieldType.toString()})
             </label>
-            {/* Renderizar subcampos si es objeto y seleccionado */}
+
+            {/* Renderizar subcampos si es objeto y está seleccionado */}
             {isSelected && isObjectType(fieldType) && (
               <FieldSelector
                 schema={schema}
@@ -68,7 +79,7 @@ function FieldSelector({ schema, type, path, selectedFields, setSelectedFields }
   );
 }
 
-// Generar query a partir de selecciónfunction
+// Construye un árbol de campos a partir de los paths seleccionados
 function buildFieldTree(paths) {
   const tree = {};
   paths.forEach((path) => {
@@ -84,6 +95,7 @@ function buildFieldTree(paths) {
   return tree;
 }
 
+// Renderiza recursivamente el árbol de campos en formato GraphQL
 function renderFieldTree(tree, type, schema, indent = '  ') {
   if (!isObjectType(type)) return '';
 
@@ -102,6 +114,7 @@ function renderFieldTree(tree, type, schema, indent = '  ') {
     .join('\n');
 }
 
+// Genera la query GraphQL a partir de los campos seleccionados
 function generateQuery(schema, selectedFields) {
   const queryType = schema.getQueryType();
   if (!queryType) return '';
@@ -111,6 +124,7 @@ function generateQuery(schema, selectedFields) {
   return `query {\n${body}\n}`;
 }
 
+// Componente principal
 export default function GraphQLCheckboxBuilder() {
   const [schemaSDL, setSchemaSDL] = useState('');
   const [selectedFields, setSelectedFields] = useState(new Set());
@@ -118,6 +132,7 @@ export default function GraphQLCheckboxBuilder() {
   const [copySuccess, setCopySuccess] = useState('');
   const [fileName, setFileName] = useState('query.graphql');
 
+  // Convierte el SDL en schema GraphQL usando buildSchema
   const schema = useMemo(() => {
     if (!schemaSDL.trim()) {
       setError(null);
@@ -125,7 +140,23 @@ export default function GraphQLCheckboxBuilder() {
       return null;
     }
     try {
-      const parsedSchema = buildSchema(schemaSDL);
+      // Definir directivas personalizadas para aceptar SDL sin modificarlo
+      const sizeDirective = new GraphQLDirective({
+        name: 'size',
+        locations: [DirectiveLocation.INPUT_FIELD_DEFINITION, DirectiveLocation.ARGUMENT_DEFINITION],
+        args: { min: { type: GraphQLInt }, max: { type: GraphQLInt } },
+      });
+      const patternDirective = new GraphQLDirective({
+        name: 'pattern',
+        locations: [DirectiveLocation.INPUT_FIELD_DEFINITION, DirectiveLocation.ARGUMENT_DEFINITION],
+        args: { regex: { type: GraphQLString } },
+      });
+
+      const parsedSchema = buildSchema(schemaSDL, {
+        assumeValid: true,
+        directives: [sizeDirective, patternDirective],
+      });
+
       setError(null);
       return parsedSchema;
     } catch (e) {
@@ -136,6 +167,7 @@ export default function GraphQLCheckboxBuilder() {
 
   const query = schema ? generateQuery(schema, selectedFields) : '';
 
+  // Copiar la query al portapapeles
   const handleCopy = () => {
     if (!query) return;
     navigator.clipboard.writeText(query)
@@ -146,6 +178,7 @@ export default function GraphQLCheckboxBuilder() {
       .catch(() => setCopySuccess('Error copiando la query'));
   };
 
+  // Exportar query como archivo .graphql
   function handleExport() {
     if (!schema) return;
     if (!fileName.trim()) {
@@ -154,7 +187,6 @@ export default function GraphQLCheckboxBuilder() {
     }
 
     let exportFileName = fileName.trim();
-    // Añadir extensión .graphql si no la tiene
     if (!exportFileName.endsWith('.graphql')) {
       exportFileName += '.graphql';
     }
@@ -171,6 +203,23 @@ export default function GraphQLCheckboxBuilder() {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   }
+
+  // Selecciona todos los campos de la Query
+  const selectAllFields = () => {
+    if (!schema) return;
+    const allFields = new Set();
+    const collectFields = (type, prefix = []) => {
+      if (!isObjectType(type)) return;
+      const fields = type.getFields();
+      Object.values(fields).forEach((field) => {
+        const fullPath = [...prefix, field.name].join('.');
+        allFields.add(fullPath);
+        collectFields(unwrapType(field.type), [...prefix, field.name]);
+      });
+    };
+    collectFields(schema.getQueryType());
+    setSelectedFields(allFields);
+  };
 
   return (
     <div style={{ fontFamily: 'monospace', fontSize: 14, maxWidth: 700, margin: 'auto' }}>
@@ -194,17 +243,14 @@ export default function GraphQLCheckboxBuilder() {
             selectedFields={selectedFields}
             setSelectedFields={setSelectedFields}
           />
+
           <h3>Query generada</h3>
           <pre>{query}</pre>
           <div style={{ marginTop: '10px', display: 'flex', gap: '10px' }}>
-            <button onClick={handleCopy}>
-              Copiar query
-            </button>
-
-            <button onClick={() => setSelectedFields(new Set())}>
-              Limpiar selección
-            </button>
+            <button onClick={handleCopy}>Copiar query</button>
+            <button onClick={() => setSelectedFields(new Set())}>Limpiar selección</button>
           </div>
+          <button onClick={selectAllFields} style={{ marginTop: '10px' }}>Seleccionar todo</button>
 
           <div style={{ marginTop: '10px' }}>
             <label>
